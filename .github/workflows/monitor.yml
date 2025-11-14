@@ -1,0 +1,43 @@
+name: Monitor New Domains
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Every 30 mins
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        run: |
+          wget -q https://github.com/projectdiscovery/notify/releases/download/v1.0.6/notify_1.0.6_linux_amd64.zip
+          unzip -q notify_1.0.6_linux_amd64.zip
+          chmod +x notify
+          sudo mv notify /usr/local/bin/
+          
+      - name: Monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          # Download current
+          curl -s https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/domains.txt -o new.txt
+          curl -s https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/wildcards.txt >> new.txt
+          
+          # Get cached
+          CACHE_KEY="domains-$(date +%Y%m%d)"
+          if [ -f old.txt ]; then
+            # Diff
+            comm -13 <(sort old.txt) <(sort new.txt) > diff.txt
+            
+            if [ -s diff.txt ]; then
+              COUNT=$(wc -l < diff.txt)
+              echo "🎯 $COUNT new domains found!" | notify -silent
+              cat diff.txt | notify -bulk -silent
+            fi
+          fi
+          
+          # Cache for next run
+          cp new.txt old.txt
