@@ -1,72 +1,29 @@
-name: Monitor New Domains
-
-on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+- name: Check for new domains
+  env:
+    TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+  run: |
+    curl -sf https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/domains.txt > new.txt
+    curl -sf https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/wildcards.txt >> new.txt
+    
+    if [ -f old.txt ]; then
+      comm -13 <(sort -u old.txt) <(sort -u new.txt) > diff.txt
+      
+      if [ -s diff.txt ]; then
+        COUNT=$(wc -l < diff.txt)
+        MSG="🎯 $COUNT new domains found!"
+        curl -sf "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+          -d "chat_id=${TG_CHAT}" \
+          -d "text=${MSG}" >/dev/null
         
-      - name: Install notify
-        run: |
-          wget -q https://github.com/projectdiscovery/notify/releases/download/v1.0.6/notify_1.0.6_linux_amd64.zip
-          unzip -q notify_1.0.6_linux_amd64.zip
-          chmod +x notify
-          sudo mv notify /usr/local/bin/
-          
-      - name: Setup notify config
-        run: |
-          cat > ~/.notify.yaml << 'EOF'
-          telegram:
-            - id: "tel"
-              telegram_chat_id: "${{ secrets.TELEGRAM_CHAT_ID }}"
-              telegram_api_token: "${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          EOF
-          
-      - name: Restore cache
-        uses: actions/cache@v3
-        with:
-          path: old.txt
-          key: domains-${{ github.run_number }}
-          restore-keys: domains-
-          
-      - name: Check for new domains
-        run: |
-          # Fetch current data
-          curl -sf https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/domains.txt -o new.txt
-          curl -sf https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/wildcards.txt >> new.txt
-          
-          # Compare if old exists
-          if [ -f old.txt ]; then
-            comm -13 <(sort -u old.txt) <(sort -u new.txt) > diff.txt
-            
-            if [ -s diff.txt ]; then
-              COUNT=$(wc -l < diff.txt)
-              echo "🎯 Found $COUNT new domains!" | notify -silent
-              
-              # Send in batches of 20
-              split -l 20 diff.txt chunk_
-              for chunk in chunk_*; do
-                cat "$chunk" | notify -bulk -silent
-              done
-              
-              echo "✅ Sent $COUNT new domains to Telegram"
-            else
-              echo "No new domains found"
-            fi
-          else
-            echo "First run - caching $(wc -l < new.txt) domains"
-          fi
-          
-          # Update cache
-          mv new.txt old.txt
-          
-      - name: Save cache
-        if: always()
-        run: |
-          [ -f old.txt ] && echo "Cache updated with $(wc -l < old.txt) domains"
+        # Send domains in batches
+        cat diff.txt | while read domain; do
+          curl -sf "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d "chat_id=${TG_CHAT}" \
+            -d "text=🆕 $domain" >/dev/null
+          sleep 0.1
+        done
+      fi
+    fi
+    
+    mv new.txt old.txt
